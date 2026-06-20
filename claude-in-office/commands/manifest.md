@@ -16,7 +16,7 @@ Prompt only for the keys their cloud path needs. Don't ask for all eight.
 |---|---|
 | Vertex | `gcp_project_id` `gcp_region` `google_client_id` `google_client_secret` |
 | Bedrock | `aws_role_arn` `aws_region` |
-| Gateway | `gateway_url` `gateway_token` |
+| Gateway | `gateway_url` `gateway_token` `gateway_auth_header` |
 
 ## Entra SSO
 
@@ -37,44 +37,42 @@ involve Microsoft.
 ## Bootstrap endpoint
 
 `bootstrap_url` points to an HTTPS endpoint you host. At startup the add-in
-fetches per-user config from it; the response overrides manifest values for
-that user.
+fetches per-user JSON from it — provider keys, `mcp_servers`, `skills` — and
+the response overrides manifest values for that user. The URL itself is
+[interpolated](bootstrap.md#template-interpolation) against manifest + attrs
+before the fetch, so one endpoint can branch on a query param.
 
-**Request**
+See [bootstrap](bootstrap.md) for the request/response contract, JWT
+validation, and handler scaffolding.
 
-```
-GET <bootstrap_url>
-Authorization: Bearer <entra_id_token>    # present only when entra_sso=1
-```
+## MCP servers
 
-If `entra_sso=1` is set, validate the JWT: `aud` is
-`c2995f31-11e7-4882-b7a7-ef9def0a0266`, `iss` is your tenant's
-`https://login.microsoftonline.com/<TENANT_ID>/v2.0`, and `oid` is the user's
-stable object ID for your allowlist. Without `entra_sso`, the request has no
-Authorization header — for endpoints behind network isolation, mTLS, or another
-auth layer the add-in doesn't see.
+`mcp_servers` is a JSON array of customer-hosted MCP servers the add-in
+connects to directly. Each entry is `{url, label, headers?, discover?}` —
+`headers` present means static auth; absent triggers OAuth discovery. Values
+interpolate other config keys via `{{gateway_url}}`-style templates.
 
-**Response** — `200 OK`, `application/json`
+Setting it here applies one list org-wide; per-user lists belong in
+[bootstrap](bootstrap.md#mcp_servers), which also has the full schema. The
+value is JSON inside a shell arg — single-quote it:
 
-The endpoint must set `Access-Control-Allow-Origin` to the add-in's origin
-(`https://pivot.claude.ai` for production) — the call is browser-side fetch,
-so without CORS the response is blocked before the add-in sees it.
-
-A flat object with any subset of the config keys. All fields optional — return
-only what this user needs.
-
-```json
-{
-  "gateway_url": "https://llm-gateway.yourcompany.internal/v1",
-  "gateway_token": "sk-user-scoped-…",
-  "aws_role_arn": "arn:aws:iam::123456789012:role/ClaudeBedrockAccess-TeamA"
-}
+```bash
+mcp_servers='[{"url":"{{gateway_url}}/deepwiki/mcp","label":"DeepWiki","headers":{"Authorization":"Bearer {{gateway_token}}"}}]'
 ```
 
-The add-in ignores unrecognized keys, so the envelope is forward-compatible.
-Today it carries provider config; future versions may read `skills`,
-`mcp_servers`, or other per-user provisioning from the same response without
-requiring endpoint changes on your side.
+## Telemetry
+
+`otlp_endpoint` routes the add-in's OpenTelemetry traces to a collector you
+operate. Set it to the collector's base HTTPS URL — the add-in appends
+`/v1/traces` and posts OTLP/HTTP. gRPC isn't supported (the add-in runs in a
+browser WebView). Leave it unset and no custom collector is configured.
+
+`otlp_headers` supplies authentication headers for that collector, in the same
+`key1=value1,key2=value2` format as the standard
+`OTEL_EXPORTER_OTLP_HEADERS` variable. URL-encode the value in the manifest.
+
+Setting these here applies one collector org-wide; per-user routing belongs in
+[bootstrap](bootstrap.md#telemetry) or extension attrs.
 
 ## Auto-connect
 

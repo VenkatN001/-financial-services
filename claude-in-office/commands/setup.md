@@ -171,6 +171,15 @@ instead of the manifest.
 
 Capture: `gateway_url`, `gateway_token`.
 
+**Auth header scheme.** The add-in sends the token as `x-api-key: <token>` by
+default — this is what LiteLLM, Portkey, and Kong accept out of the box. If
+your gateway expects `Authorization: Bearer <token>` instead (common for
+custom/enterprise gateways), set `gateway_auth_header=authorization`. The
+value is case-sensitive lowercase; anything else silently falls back to
+`x-api-key`. If you're unsure, run the Step 6 smoke test with `x-api-key`
+first — a 401 with "no Authorization header" in your gateway logs means you
+need `authorization`.
+
 Continue to [Step 3](#step-3--decide-whats-org-wide-vs-per-user). Gateway auth
 is token-based, not Entra, so admin consent isn't needed unless you also opt
 into per-user config (in which case come back to Step 2 after deciding in Step 3).
@@ -221,9 +230,16 @@ npx -y office-addin-manifest validate manifest.xml
 
 ## Step 5 — Per-user config
 
-Skip unless Step 3 routed a key here. Otherwise read
-`${CLAUDE_PLUGIN_ROOT}/commands/update-user-attrs.md` with the per-user keys
-from Step 3.
+Skip unless Step 3 routed something here. Otherwise pick a mechanism by what
+you're carrying:
+
+| Carrying | Use | Read |
+|---|---|---|
+| A string or two — token, region | Extension attrs | `${CLAUDE_PLUGIN_ROOT}/commands/update-user-attrs.md` |
+| `mcp_servers`, `skills`, anything structured | Bootstrap endpoint | `${CLAUDE_PLUGIN_ROOT}/commands/bootstrap.md` |
+
+Attrs are an `az rest PATCH` per user — less work, but flat strings ≤256 chars
+only. Bootstrap is an HTTPS service you build — more work, no shape limits.
 
 ## Step 6 — Verify a model is reachable
 
@@ -238,6 +254,8 @@ the other. 401/403 means the token is wrong, which is a Step 1 problem.
 
 ```bash
 # Windows: swap /dev/null for NUL
+# If gateway_auth_header=authorization, swap the -H line for:
+#   -H 'authorization: Bearer <token>'
 curl -s -o /dev/null -w '%{http_code}\n' "<gateway_url>/v1/messages" \
   -H 'content-type: application/json' -H 'x-api-key: <token>' \
   -d '{"model":"claude-sonnet-4-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
